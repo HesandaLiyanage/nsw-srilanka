@@ -152,8 +152,8 @@ func (h *HTTPHandler) HandleCompleteTaskStep(w http.ResponseWriter, r *http.Requ
 
 	slog.InfoContext(r.Context(), "tasks: processing complete step command", "taskId", taskID, "command", command)
 
-	// This endpoint mutates task state, so like HandleCreateConsignment it gets
-	// full audit coverage: both denial shapes and the successful completion.
+	// This endpoint mutates task state, so it gets full audit coverage: both
+	// denial shapes and the successful completion.
 	if err := h.Manager.CompleteTaskStep(r.Context(), taskID, payload); err != nil {
 		switch {
 		case errors.Is(err, taskauthzext.ErrUnauthenticated):
