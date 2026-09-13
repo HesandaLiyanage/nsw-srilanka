@@ -15,14 +15,14 @@ import (
 	"github.com/OpenNSW/core/artifact"
 	"github.com/OpenNSW/core/authn"
 	flowextensions "github.com/OpenNSW/core/taskflow/extensions"
-	flowplugins "github.com/OpenNSW/core/taskflow/plugins"
 	"github.com/OpenNSW/core/taskflow/orchestrator"
+	flowplugins "github.com/OpenNSW/core/taskflow/plugins"
 	"github.com/OpenNSW/core/taskflow/renderer/zoneview"
 	"github.com/OpenNSW/core/taskflow/store"
 	"github.com/OpenNSW/core/uiprojector"
 	workflow "github.com/OpenNSW/core/workflow"
-	authzext "github.com/OpenNSW/nsw-srilanka/internal/tasks/extensions/authz"
 	nswaudit "github.com/OpenNSW/nsw-srilanka/internal/audit"
+	authzext "github.com/OpenNSW/nsw-srilanka/internal/tasks/extensions/authz"
 	"github.com/OpenNSW/nsw-srilanka/internal/tasks/taskauthz"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +68,7 @@ func TestHandleCompleteTaskStep_RejectsTrailingDataAfterJSON(t *testing.T) {
 		t.Fatalf("expected error body to mention %q, got %s", errInvalidRequestBody, recorder.Body.String())
 	}
 }
+
 // completeTaskHandler wires a real TaskManager over the in-memory store with
 // the authz extension registered, so the tests exercise the same PRE_RESUME
 // authorization path production uses. Each case registers its own minimal
@@ -130,7 +131,8 @@ func (noopWorkflowRunner) GetStatus(context.Context, string) (*workflow.Workflow
 	return nil, nil
 }
 
-func (noopWorkflowRunner) RegisterDefinitionHandler(func(string) (workflow.WorkflowDefinition, error)) {}
+func (noopWorkflowRunner) RegisterDefinitionHandler(func(string) (workflow.WorkflowDefinition, error)) {
+}
 
 func (noopWorkflowRunner) StartWorker() error { return nil }
 
@@ -275,9 +277,6 @@ func ownedRoles(owned map[string]bool) taskauthz.OwnedRolesFunc {
 		return owned, nil
 	}
 }
-
-
-
 
 // --- HandleGetTask ---------------------------------------------------------
 
@@ -840,4 +839,3 @@ func TestHandleCompleteTaskStep_UnrulableCommandDeniedAndAudited(t *testing.T) {
 	assert.Equal(t, argus.StatusFailure, ev.Status)
 	assert.Equal(t, "escalate", ev.Metadata["command"])
 }
-
