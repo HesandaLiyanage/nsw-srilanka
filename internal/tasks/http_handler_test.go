@@ -773,6 +773,7 @@ func TestHandleCompleteTaskStep_UnauthenticatedAudited(t *testing.T) {
 	ev := requireSingleAuditEvent(t, auditor)
 	assert.Equal(t, argus.StatusFailure, ev.Status)
 	assert.Equal(t, "submit", ev.Metadata["command"])
+	assert.Equal(t, "task_cmd_unauthenticated", ev.Metadata["error_code"])
 	assert.Contains(t, ev.Metadata, "error")
 }
 
@@ -795,6 +796,7 @@ func TestHandleCompleteTaskStep_ForbiddenAudited(t *testing.T) {
 	ev := requireSingleAuditEvent(t, auditor)
 	assert.Equal(t, argus.StatusFailure, ev.Status)
 	assert.Equal(t, "submit", ev.Metadata["command"])
+	assert.Equal(t, "task_cmd_forbidden", ev.Metadata["error_code"])
 	assert.Contains(t, ev.Metadata, "error")
 }
 
@@ -821,6 +823,45 @@ func TestHandleCompleteTaskStep_SuccessAudited(t *testing.T) {
 
 // A (state, command) pair with no rule is deny-by-default (403), and the
 // denial is audited like any other forbidden command.
+
+// With handler.Audit nil, the write path must still deny (401/403) and serve a
+// successful completion (204) without panicking, mirroring the read-path
+// nil-audit guarantee: audit failures or a missing auditor never take the
+// endpoint down.
+func TestHandleCompleteTaskStep_NilAuditDoesNotPanic(t *testing.T) {
+	auditor := &mockAuditor{}
+	handler, _ := completeTaskHandler(t, testWriteCatalog(), auditor)
+	handler.Audit = nil
+
+	// 403: caller does not own the task in the required role.
+	denied := taskauthz.Input{
+		Kind:       taskauthz.KindUser,
+		Roles:      []string{"Trader"},
+		OwnedRoles: ownedRoles(map[string]bool{"trader": false, "cha": false}),
+	}
+	recorder := completeTask(t, handler, &denied, "submit")
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("denied request: got %d, want 403", recorder.Code)
+	}
+
+	// 401: no principal resolved on the request context.
+	recorder = completeTask(t, handler, nil, "submit")
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated request: got %d, want 401", recorder.Code)
+	}
+
+	// 204: a permitted command still completes successfully.
+	allowed := taskauthz.Input{
+		Kind:       taskauthz.KindUser,
+		Roles:      []string{"Trader"},
+		OwnedRoles: ownedRoles(map[string]bool{"trader": true, "cha": false}),
+	}
+	recorder = completeTask(t, handler, &allowed, "submit")
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("permitted request: got %d, want 204", recorder.Code)
+	}
+}
+
 func TestHandleCompleteTaskStep_UnrulableCommandDeniedAndAudited(t *testing.T) {
 	auditor := &mockAuditor{}
 	handler, _ := completeTaskHandler(t, testWriteCatalog(), auditor)

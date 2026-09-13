@@ -164,8 +164,9 @@ func (h *HTTPHandler) HandleCompleteTaskStep(w http.ResponseWriter, r *http.Requ
 				TargetID:   taskID,
 				Failure:    true,
 				Metadata: map[string]any{
-					"error":   err.Error(),
-					"command": command,
+					"error_code": "task_cmd_unauthenticated",
+					"error":      err.Error(),
+					"command":    command,
 				},
 			})
 			httputil.Error(w, r, http.StatusUnauthorized, errAuthenticationReq)
@@ -178,8 +179,9 @@ func (h *HTTPHandler) HandleCompleteTaskStep(w http.ResponseWriter, r *http.Requ
 				TargetID:   taskID,
 				Failure:    true,
 				Metadata: map[string]any{
-					"error":   err.Error(),
-					"command": command,
+					"error_code": "task_cmd_forbidden",
+					"error":      err.Error(),
+					"command":    command,
 				},
 			})
 			httputil.Error(w, r, http.StatusForbidden, errForbiddenTaskAction)
