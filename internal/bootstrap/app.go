@@ -43,6 +43,7 @@ import (
 	"github.com/OpenNSW/nsw-srilanka/internal/catalog"
 	"github.com/OpenNSW/nsw-srilanka/internal/consignment"
 	"github.com/OpenNSW/nsw-srilanka/internal/database"
+	"github.com/OpenNSW/nsw-srilanka/internal/htmltemplate"
 	"github.com/OpenNSW/nsw-srilanka/internal/metrics"
 	nswpayment "github.com/OpenNSW/nsw-srilanka/internal/payment"
 	"github.com/OpenNSW/nsw-srilanka/internal/profile"
@@ -768,6 +769,17 @@ func (p registryTemplateProvider) GetTemplate(ctx context.Context, id string) ([
 	return []byte(raw), nil
 }
 
+// registryHTMLTemplates adapts the artifact registry to the HTML document
+// generator's HTMLTemplateSource, serving the latest version of each
+// html_template.
+type registryHTMLTemplates struct {
+	reg *artifact.Registry
+}
+
+func (p registryHTMLTemplates) HTMLTemplate(ctx context.Context, id string) ([]byte, error) {
+	return htmltemplate.Load(ctx, p.reg, id)
+}
+
 // initTask consolidates the task-orchestration engine registrations, remote
 // configs, and wiring against core/taskflow + core/workflow. It builds and
 // starts the orchestration stack on MICRO_WORKFLOW_QUEUE; the returned
@@ -776,13 +788,13 @@ func (p registryTemplateProvider) GetTemplate(ctx context.Context, id string) ([
 // separately (see Stage 5 below).
 // registerFlowPlugins installs the plugins this deployment adds on top of the
 // task-plugin set: the synchronous transforms that shape a fan-out, the CHA
-// writer, and the reference ID generator.
+// writer, the reference ID generator, and the HTML document generator.
 //
 // A table rather than a run of near-identical registrations, as
 // taskplugins.Register does for the same reason — seven of them inline was most
 // of initTask's branching, and adding an eighth meant editing a function that
 // has nothing else to do with plugins.
-func registerFlowPlugins(reg *plugins.Registry, db *gorm.DB, companyService company.Service, refIDs refid.Registry) error {
+func registerFlowPlugins(reg *plugins.Registry, db *gorm.DB, companyService company.Service, refIDs refid.Registry, htmlTemplates taskplugins.HTMLTemplateSource, files taskplugins.DocumentSaver) error {
 	entries := []struct {
 		taskType string
 		plugin   plugins.TaskPlugin
@@ -794,6 +806,7 @@ func registerFlowPlugins(reg *plugins.Registry, db *gorm.DB, companyService comp
 		{taskplugins.TaskTypeCDNResultsCollector, trade.NewGenericExecutorPlugin(taskplugins.CDNResultsCollectorFunc)},
 		{"CHA_PERSIST_WRITER", trade.NewCHAPersistPlugin(db, companyService)},
 		{taskplugins.TaskTypeRefIDGenerator, taskplugins.NewRefIDGeneratorPlugin(refIDs)},
+		{taskplugins.TaskTypeHTMLDocumentGenerator, taskplugins.NewHTMLDocumentGeneratorPlugin(htmlTemplates, files)},
 	}
 
 	for _, e := range entries {
@@ -822,7 +835,7 @@ func initTask(
 	if err := taskplugins.Register(pluginsRegistry, remoteManager, paymentService, storageService, cfg.Server.ServiceURL); err != nil {
 		return nil, nil, fmt.Errorf("failed to register task plugins: %w", err)
 	}
-	if err := registerFlowPlugins(pluginsRegistry, db, companyService, refIDs); err != nil {
+	if err := registerFlowPlugins(pluginsRegistry, db, companyService, refIDs, registryHTMLTemplates{reg: artifactRegistry}, storageService); err != nil {
 		return nil, nil, err
 	}
 
