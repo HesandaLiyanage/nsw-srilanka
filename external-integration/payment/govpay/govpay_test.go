@@ -11,34 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMapGovPayStatus(t *testing.T) {
-	cases := map[string]struct {
-		in      string
-		want    corepayment.WebhookStatus
-		wantErr bool
-	}{
-		"paid":      {in: "paid", want: corepayment.WebhookStatusSuccess},
-		"completed": {in: "COMPLETED", want: corepayment.WebhookStatusSuccess},
-		"success":   {in: "success", want: corepayment.WebhookStatusSuccess},
-		"declined":  {in: "declined", want: corepayment.WebhookStatusFailed},
-		"rejected":  {in: "REJECTED", want: corepayment.WebhookStatusFailed},
-		"pending":   {in: " Pending ", want: corepayment.WebhookStatusPending}, // trims + case-insensitive
-		"unknown":   {in: "weird", wantErr: true},
-		"empty":     {in: "", wantErr: true},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got, err := mapGovPayStatus(tc.in)
-			if tc.wantErr {
-				require.ErrorIs(t, err, corepayment.ErrUnsupportedWebhookStatus)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 // updateBody is a GovPay+ update (webhook) request carrying the payment outcome
 // as named data[] items.
 func updateBody(refNo, status, amount, currency string) []byte {
@@ -57,7 +29,7 @@ func updateBody(refNo, status, amount, currency string) []byte {
 	}`)
 }
 
-func TestGovPay_ParseWebhook_NormalizesStatus(t *testing.T) {
+func TestGovPay_ParseWebhook_ReadsTheReturnedParameters(t *testing.T) {
 	g := configuredGateway()
 
 	p, _, err := g.parseWebhookEnc(t, updateBody("TNSW1", "paid", "1500.00", "LKR"), nil)
@@ -70,10 +42,30 @@ func TestGovPay_ParseWebhook_NormalizesStatus(t *testing.T) {
 	assert.True(t, p.Amount.Equal(decimal.RequireFromString("1500.00")))
 }
 
-func TestGovPay_ParseWebhook_UnknownStatus(t *testing.T) {
+// GovPay+ returns only the parameters the presentment response asked for, which
+// include no status: the update call itself means the payer has paid.
+func TestGovPay_ParseWebhook_WithoutStatusIsSuccess(t *testing.T) {
 	g := configuredGateway()
-	_, _, err := g.parseWebhookEnc(t, updateBody("TNSW1", "weird", "1500.00", "LKR"), nil)
-	require.ErrorIs(t, err, corepayment.ErrUnsupportedWebhookStatus)
+	body := []byte(`{
+		"transactionID":"gwtx1",
+		"subinstId":"002",
+		"serviceid":"001",
+		"serviceName":"App Fee",
+		"data":[
+			{"seq":"1","paramName":"refNo","value":"TNSW1"},
+			{"seq":"2","paramName":"amount","value":"1500.00"},
+			{"seq":"3","paramName":"currency","value":"LKR"}
+		]
+	}`)
+
+	p, resp, err := g.parseWebhookEnc(t, body, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "TNSW1", p.ReferenceNumber)
+	assert.Equal(t, corepayment.WebhookStatusSuccess, p.Status)
+	assert.True(t, p.Amount.Equal(decimal.RequireFromString("1500.00")))
+	assert.Equal(t, "LKR", p.Currency)
+	require.NotNil(t, resp)
+	assert.Equal(t, 200, resp.HTTPStatus)
 }
 
 func TestGovPay_ParseWebhook_MissingRefNo(t *testing.T) {
