@@ -233,9 +233,10 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 	}
 	tm := task.Manager
 	// The payment service and the webhook handlers below complete steps on their
-	// own authority, so they reach the task manager as the system principal.
+	// own authority, so they reach the task manager as the system principal. The
+	// payment service also names no command, so its completer names the step's.
 	systemTasks := systemcaller.New(tm)
-	paymentService.SetTaskCompleter(systemTasks)
+	paymentService.SetTaskCompleter(nswpayment.NewTaskCompleter(systemTasks))
 
 	// -------------------------------------------------------------------
 	// Stage 5: Consignment Service & Workflow Parent Runner
