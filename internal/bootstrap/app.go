@@ -60,6 +60,7 @@ import (
 	"github.com/OpenNSW/nsw-srilanka/internal/tasks/authzgate"
 	taskauthzext "github.com/OpenNSW/nsw-srilanka/internal/tasks/extensions/authz"
 	"github.com/OpenNSW/nsw-srilanka/internal/tasks/extensions/notify"
+	"github.com/OpenNSW/nsw-srilanka/internal/tasks/extensions/payloadschema"
 	taskplugins "github.com/OpenNSW/nsw-srilanka/internal/tasks/plugins"
 	taskrenderer "github.com/OpenNSW/nsw-srilanka/internal/tasks/renderer"
 	"github.com/OpenNSW/nsw-srilanka/internal/tasks/systemcaller"
@@ -934,6 +935,9 @@ func initTask(
 	}
 	if err := taskauthzext.Register(extensionsRegistry, taskCatalog(globalCatalog)); err != nil {
 		return nil, nil, fmt.Errorf("register authz extension: %w", err)
+	}
+	if err := payloadschema.Register(extensionsRegistry, registryTemplateProvider{reg: artifactRegistry}.GetTemplate); err != nil {
+		return nil, nil, fmt.Errorf("register payload schema extension: %w", err)
 	}
 	tm = orchestrator.NewTaskManager(taskStore, artifactRegistry, pluginsRegistry, extensionsRegistry, workflowRunner, onTaskCompleted, taskRenderer)
 
