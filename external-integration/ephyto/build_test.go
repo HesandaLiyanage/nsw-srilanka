@@ -41,9 +41,9 @@ func sampleUserform() map[string]any {
 				"commodity_condition":        "fresh",
 				"commodity_intended_use":     "decorative",
 				"quantity_net_weight":        float64(500),
-				"quantity_net_weight_unit":   "kg",
+				"quantity_net_weight_unit":   "KGM",
 				"quantity_gross_weight":      float64(550),
-				"quantity_gross_weight_unit": "kg",
+				"quantity_gross_weight_unit": "KGM",
 				"packages_count":             float64(25),
 				"packages_description":       "Cardboard boxes",
 				"origin_country":             "Sri Lanka",
@@ -130,7 +130,7 @@ func twoItemUserform() map[string]any {
 		"commodity_common_name":    "Cinnamon Quills",
 		"commodity_botanical_name": "Cinnamomum verum",
 		"quantity_net_weight":      float64(100),
-		"quantity_net_weight_unit": "kg",
+		"quantity_net_weight_unit": "KGM",
 		"packages_count":           float64(10),
 		"origin_country":           "Sri Lanka",
 	})
@@ -225,6 +225,43 @@ func TestBuildCertXML_EmitsTheTransportMovement(t *testing.T) {
 	}
 	if !strings.Contains(body, "<ram:ModeCode>3</ram:ModeCode>") {
 		t.Error("the chosen mode of transport did not reach the certificate")
+	}
+}
+
+// The apply form's dropdowns store { value, label }. The certificate carries
+// the code, as it did when they stored the bare code.
+func TestBuildInput_ReadsTheCodeOfADropdownAnswer(t *testing.T) {
+	uf := sampleUserform()
+	uf["nppo_office_location"] = map[string]any{"value": "SEA-CMB", "label": "Plant Quarantine Station - Seaport, Colombo"}
+	uf["transport_mode"] = map[string]any{"value": "1", "label": "Air transport"}
+	com := uf["commodities"].([]any)[0].(map[string]any)
+	delete(com, "packages_count")
+	com["commodity_plant_part"] = map[string]any{"value": "18", "label": "Leaves"}
+	com["commodity_condition"] = map[string]any{"value": "13", "label": "Fresh"}
+	com["commodity_intended_use"] = map[string]any{"value": "3", "label": "Decoration"}
+	com["quantity_net_weight_unit"] = map[string]any{"value": "TNE", "label": "ton (t)"}
+	com["quantity_gross_weight_unit"] = map[string]any{"value": "MTQ", "label": "cubic metre (m³)"}
+	com["packages_description"] = map[string]any{"value": "CT", "label": "Carton"}
+	com["origin_country"] = map[string]any{"value": "IN", "label": "India"}
+
+	in := BuildInput(map[string]any{"userform": uf, "certificate_id": "PC-1", "hub_destination": "LK2"})
+
+	c := in.Certificate
+	tl := c.Consignment.Items[0].TradeLines[0]
+	for field, got := range map[string][2]string{
+		"place of issue":    {c.PlaceOfIssue, "SEA-CMB"},
+		"transport mode":    {c.Consignment.MeansOfConveyance[0].ModeCode, "1"},
+		"vegetable part":    {tl.VegetablePart, "18"},
+		"condition":         {tl.Condition, "13"},
+		"intended use":      {tl.IntendedUse, "3"},
+		"package":           {tl.PackageDescription, "CT"},
+		"origin":            {tl.OriginCountries[0], "IN"},
+		"net weight unit":   {tl.NetWeight.Unit, "TNE"},
+		"gross weight unit": {tl.GrossWeight.Unit, "MTQ"},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("%s = %q, want %q", field, got[0], got[1])
+		}
 	}
 }
 
