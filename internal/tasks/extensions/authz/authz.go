@@ -111,18 +111,20 @@ func (e *Extension) MayAct(ctx context.Context, record *store.TaskRecord, in tas
 // MayActOnStep reports whether in, the caller, may act on record's active step,
 // whose template is step: whether every PRE_RESUME authz extension on it lets
 // the caller run some command in the task's current state, as core runs them
-// all before a submission. A step with none checks no one's submission, so
-// anyone who may read the task may act on it.
+// all before a submission. A step with none is one no one may act on, as the
+// task manager refuses it (core's WithRequiredPreResumeExtensions).
 func (e *Extension) MayActOnStep(ctx context.Context, record *store.TaskRecord, in taskauthz.Input, step types.StepTemplate) (bool, error) {
+	declared := false
 	for _, ext := range step.Extensions {
 		if ext.ID != ExtAuthz || ext.Phase != types.PhasePreResume {
 			continue
 		}
+		declared = true
 		if ok, err := e.MayAct(ctx, record, in, ext.Properties); err != nil || !ok {
 			return false, err
 		}
 	}
-	return true, nil
+	return declared, nil
 }
 
 func parseRules(record *store.TaskRecord, properties json.RawMessage) (rules, error) {

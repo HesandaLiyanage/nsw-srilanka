@@ -783,6 +783,13 @@ func stepNamespace(reg *artifact.Registry) tasks.NamespaceOf {
 	}
 }
 
+// taskManagerOptions makes the task manager refuse to complete or draft a step whose
+// template declares no authz extension, so a step that forgets its rule is closed to
+// everyone rather than open to anyone.
+func taskManagerOptions() []orchestrator.Option {
+	return []orchestrator.Option{orchestrator.WithRequiredPreResumeExtensions(taskauthzext.ExtAuthz)}
+}
+
 // stepCanAct decides whether a caller may act on a task's active step, by the
 // authz rules on its step template in the artifact registry. A task with no
 // active step template has nothing to act on.
@@ -944,7 +951,7 @@ func initTask(
 	if err := payloadschema.Register(extensionsRegistry, registryTemplateProvider{reg: artifactRegistry}.GetTemplate, payloadschema.NamespaceOf(stepNamespace(artifactRegistry))); err != nil {
 		return nil, nil, fmt.Errorf("register payload schema extension: %w", err)
 	}
-	tm = orchestrator.NewTaskManager(taskStore, artifactRegistry, pluginsRegistry, extensionsRegistry, workflowRunner, onTaskCompleted, taskRenderer)
+	tm = orchestrator.NewTaskManager(taskStore, artifactRegistry, pluginsRegistry, extensionsRegistry, workflowRunner, onTaskCompleted, taskRenderer, taskManagerOptions()...)
 
 	if err := workflowRunner.StartWorker(); err != nil {
 		return nil, nil, fmt.Errorf("failed to start micro workflow worker: %w", err)

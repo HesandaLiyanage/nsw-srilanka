@@ -321,10 +321,10 @@ func TestExtension_MayActOnStep(t *testing.T) {
 		// Core runs them all, so every one must allow the caller.
 		{"one of two authz extensions refuses", []types.ExtensionConfig{authz(types.PhasePreResume, traderRule), authz(types.PhasePreResume, chaRule)}, false},
 		{"one that refuses", []types.ExtensionConfig{authz(types.PhasePreResume, chaRule)}, false},
-		// None of these checks who submits.
-		{"an authz extension after the step resumes", []types.ExtensionConfig{authz(types.PhasePostResume, chaRule)}, true},
-		{"another extension", []types.ExtensionConfig{{ID: "audit", Phase: types.PhasePreResume, Properties: chaRule}}, true},
-		{"no extensions", nil, true},
+		// None of these checks who submits, so the task manager refuses the step.
+		{"an authz extension after the step resumes", []types.ExtensionConfig{authz(types.PhasePostResume, traderRule)}, false},
+		{"another extension", []types.ExtensionConfig{{ID: "audit", Phase: types.PhasePreResume, Properties: traderRule}}, false},
+		{"no extensions", nil, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
