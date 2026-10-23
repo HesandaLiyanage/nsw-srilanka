@@ -13,6 +13,8 @@ import type { ZoneView } from '@/features/zone/types'
 import { zoneWidthClass } from '@/features/zone/width'
 import { Breadcrumb, type BreadcrumbItem } from '@/components/Breadcrumb'
 import { humanizeStatus } from '@/utils/formatStatus'
+import { isAgencyMode } from '@/features/case/mode'
+import { ROUTES } from '@/constants'
 
 const POST_SUBMIT_REFETCH_DELAY_MS = 1500
 const NEXT_TASK_MAX_ATTEMPTS = 5
@@ -34,14 +36,14 @@ export function TaskDetailScreen() {
   const navigate = useNavigate()
   const goToTasks = () => {
     if (consignmentId) {
-      void navigate(`/consignments/${consignmentId}`, { replace: true })
+      void navigate(ROUTES.CONSIGNMENT_DETAIL(consignmentId), { replace: true })
       return
     }
     void navigate(-1)
   }
   const goToNextTask = (nextId: string) => {
     if (!consignmentId) return
-    void navigate(`/consignments/${consignmentId}/tasks/${nextId}`)
+    void navigate(ROUTES.TASK_FORM(consignmentId, nextId))
   }
   const { t } = useTranslation()
   const [zoneView, setZoneView] = useState<ZoneView | null>(null)
@@ -207,11 +209,13 @@ export function TaskDetailScreen() {
   // The task's configured name, or its type until the consignment has loaded.
   const title = nodeName(taskId) || humanizeStatus(zoneView.task_type)
   const nextTaskName = nodeName(nextTaskId)
-  const breadcrumb: BreadcrumbItem[] = [{ label: t('nav.consignments'), to: '/consignments' }]
+  const breadcrumb: BreadcrumbItem[] = [
+    { label: t(isAgencyMode ? 'nav.cases' : 'nav.consignments'), to: ROUTES.CONSIGNMENTS },
+  ]
   if (consignmentId) {
     breadcrumb.push({
-      label: current?.name || t('consignments.detail.title'),
-      to: `/consignments/${consignmentId}`,
+      label: current?.name || t(isAgencyMode ? 'cases.detail.title' : 'consignments.detail.title'),
+      to: ROUTES.CONSIGNMENT_DETAIL(consignmentId),
     })
   }
   breadcrumb.push({ label: title })
@@ -327,7 +331,7 @@ export function TaskDetailScreen() {
             </Button>
           ) : (
             <Button size="3" variant="soft" onClick={goToTasks}>
-              {t('tasks.backToConsignment')}
+              {t(isAgencyMode ? 'tasks.backToCase' : 'tasks.backToConsignment')}
             </Button>
           )}
         </div>

@@ -17,6 +17,7 @@ const en = {
     nav: {
       menu: 'Menu',
       consignments: 'Consignments',
+      cases: 'Cases',
       verifiedDocs: 'Verified Docs',
     },
 
@@ -31,6 +32,13 @@ const en = {
           id: 'Case',
           state: 'State',
           created: 'Created',
+        },
+      },
+      detail: {
+        title: 'Case',
+        backToList: 'Back to Cases',
+        field: {
+          caseId: 'Case ID',
         },
       },
     },
@@ -52,17 +60,12 @@ const en = {
           import: 'Import',
           export: 'Export',
         },
-        role: {
-          trader: 'Trader',
-          cha: 'CHA',
-        },
         empty: {
           none: 'No consignments yet.',
           filtered: 'No consignments match your filters.',
         },
         table: {
           id: 'Consignment',
-          role: 'Role',
           tradeFlow: 'Trade Flow',
           state: 'State',
           created: 'Created',
@@ -128,6 +131,7 @@ const en = {
       continueTo: 'Continue to {{name}}',
       continueToNext: 'Continue to next task',
       backToConsignment: 'Back to consignment',
+      backToCase: 'Back to case',
       draftSaved: 'Draft saved',
       savingDraft: 'Saving…',
       unsaved: {
@@ -150,15 +154,24 @@ const en = {
     },
 
     workflow: {
-      taskHistory: 'Task History',
-      actionRequired: 'Action Required',
-      inReview: 'In Review',
-      processHistory: 'Process History',
-      updatingList: 'Updating your list...',
-      waitingForUpdates: {
-        title: 'Waiting for Updates',
-        description: 'Current steps are being processed. Next tasks will unlock automatically.',
+      tabs: {
+        active: 'Active',
+        done: 'Done',
       },
+      actionRequired: 'Action Required',
+      waitingOnOthers: 'Waiting on Others',
+      untitledTask: 'Untitled task',
+      continue: 'Continue',
+      continueTask: 'Continue {{name}}',
+      view: 'View',
+      viewTask: 'View {{name}}',
+      completedAt: 'Completed {{date}}',
+      since: 'Since {{date}}',
+      nothingNeeded: 'Nothing needs your action right now.',
+      newStepsAppear: 'New steps appear here as your applications are reviewed.',
+      newStepsAppearCase: 'New steps appear here as the case progresses.',
+      consignmentComplete: 'This consignment is complete.',
+      noneDone: 'No tasks are finished yet.',
       status: {
         completed: 'Completed',
         ready: 'Ready',

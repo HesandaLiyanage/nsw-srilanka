@@ -9,6 +9,7 @@ import { createConsignment, getAllConsignments } from '@/features/consignment/se
 import { getStateColor, formatState, formatDateTime } from '@/features/consignment/utils.ts'
 import { PaginationControl } from '@/components/common/PaginationControl.tsx'
 import { LinkRow, RowLink } from '@/components/common/LinkRow.tsx'
+import { ROUTES } from '@/constants'
 
 export function ConsignmentScreen() {
   const navigate = useNavigate()
@@ -39,7 +40,7 @@ export function ConsignmentScreen() {
     setCreating(true)
     try {
       const response = await createConsignment()
-      void navigate(`/consignments/${response.id}`)
+      void navigate(ROUTES.CONSIGNMENT_DETAIL(response.id))
     } catch (error) {
       console.error('Failed to create consignment:', error)
     } finally {
@@ -175,9 +176,6 @@ export function ConsignmentScreen() {
                     <th className="px-6 py-3 text-left text-xs font-semibold text-foreground-muted uppercase tracking-wider">
                       {t('consignments.list.table.id')}
                     </th>
-                    <th className="px-6 py-3 text-center text-xs font-semibold text-foreground-muted uppercase tracking-wider">
-                      {t('consignments.list.table.role')}
-                    </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold text-foreground-muted uppercase tracking-wider">
                       {t('consignments.list.table.tradeFlow')}
                     </th>
@@ -191,9 +189,9 @@ export function ConsignmentScreen() {
                 </thead>
                 <tbody className="divide-y divide-border/60">
                   {consignments.map((consignment) => (
-                    <LinkRow key={consignment.id} to={`/consignments/${consignment.id}`}>
+                    <LinkRow key={consignment.id} to={ROUTES.CONSIGNMENT_DETAIL(consignment.id)}>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <RowLink to={`/consignments/${consignment.id}`}>
+                        <RowLink to={ROUTES.CONSIGNMENT_DETAIL(consignment.id)}>
                           {consignment.name ? (
                             <div className="flex flex-col">
                               <Text size="2" weight="bold" className="text-info-strong">
@@ -209,15 +207,6 @@ export function ConsignmentScreen() {
                             </Text>
                           )}
                         </RowLink>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex justify-center gap-1">
-                          {(consignment.callerRoles ?? []).map((role) => (
-                            <Badge key={role} size="1" color={role === 'cha' ? 'purple' : 'gray'} variant="soft">
-                              {t(`consignments.list.role.${role}`)}
-                            </Badge>
-                          ))}
-                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <Badge size="1" color={consignment.flow === 'IMPORT' ? 'blue' : 'green'} variant="soft">
