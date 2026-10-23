@@ -11,13 +11,11 @@ import { AdminConsignmentEngineStatusScreen } from '@/features/admin/screens/Adm
 import { AdminConsignmentDetailScreen } from '@/features/admin/screens/AdminConsignmentDetailScreen.tsx'
 import { useAuth } from 'react-oidc-context'
 import { LoginScreen } from './screens/LoginScreen.tsx'
-import { RoleProvider } from './services/RoleContext'
 import { ProfileProvider } from './services/ProfileContext'
 import { SearchServiceProvider, UploadProvider } from '@opennsw/jsonforms-renderers'
 import { uploadFile, getDownloadUrl } from './services/storage'
 import { searchServices } from './services/searchService'
 import { useAuthContext } from './hooks/useAuthContext'
-import { UnauthorizedScreen } from './screens/UnauthorizedScreen.tsx'
 import { ZonePreviewScreen } from '@/features/zone/ZonePreviewScreen.tsx'
 import { appConfig, displayName } from './config'
 import { useEffect } from 'react'
@@ -33,20 +31,19 @@ function UploadWrapper({ children }: { children: ReactNode }) {
 }
 
 function ProtectedLayout() {
-  const { isSignedIn, isLoading, availableRoles, isResolvingRoles } = useAuthContext()
+  const { isSignedIn, isLoading } = useAuthContext()
 
-  if (isLoading || (isSignedIn && (isResolvingRoles || availableRoles === null))) return null
+  if (isLoading) return null
   if (!isSignedIn) return <Navigate to="/login" replace />
-  if (!availableRoles || availableRoles.length === 0) return <UnauthorizedScreen />
 
+  // Every signed-in user is admitted; the backend authorizes each request by the
+  // token's roles.
   return (
-    <RoleProvider availableRoles={availableRoles} isLoading={isResolvingRoles}>
-      <ProfileProvider>
-        <UploadWrapper>
-          <Layout />
-        </UploadWrapper>
-      </ProfileProvider>
-    </RoleProvider>
+    <ProfileProvider>
+      <UploadWrapper>
+        <Layout />
+      </UploadWrapper>
+    </ProfileProvider>
   )
 }
 

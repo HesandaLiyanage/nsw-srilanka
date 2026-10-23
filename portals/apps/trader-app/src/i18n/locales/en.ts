@@ -20,25 +20,6 @@ const en = {
       verifiedDocs: 'Verified Docs',
     },
 
-    roles: {
-      primary: '(Primary)',
-      trader: {
-        label: 'Trader',
-        description: 'Managing consignments',
-        dropdownDescription: 'Create and manage consignments',
-      },
-      cha: {
-        label: 'CHA',
-        description: 'Handling Customs Clearances',
-        dropdownDescription: 'Handle customs clearances',
-      },
-      nswAdmin: {
-        label: 'NSW Admin',
-        description: 'Managing the system',
-        dropdownDescription: 'Manage the system',
-      },
-    },
-
     cases: {
       list: {
         loading: 'Loading Cases...',
@@ -71,13 +52,17 @@ const en = {
           import: 'Import',
           export: 'Export',
         },
+        role: {
+          trader: 'Trader',
+          cha: 'CHA',
+        },
         empty: {
-          cha: 'No consignments yet.',
-          trader: 'No consignments yet. Click "New Consignment" to create your first one.',
+          none: 'No consignments yet.',
           filtered: 'No consignments match your filters.',
         },
         table: {
           id: 'Consignment',
+          role: 'Role',
           tradeFlow: 'Trade Flow',
           state: 'State',
           created: 'Created',
