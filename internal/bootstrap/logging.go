@@ -10,7 +10,6 @@ import (
 	"github.com/OpenNSW/core/trace"
 	"github.com/OpenNSW/core/trace/logging"
 	"github.com/OpenNSW/nsw-srilanka/cmd/server/config"
-	nswaudit "github.com/OpenNSW/nsw-srilanka/internal/audit"
 )
 
 // ConfigureLogging installs the trace-aware slog handler as the process
@@ -19,6 +18,19 @@ import (
 // to server logs. Must be called before any request is served.
 func ConfigureLogging(cfg *config.Config) {
 	configureLogging(cfg, os.Stdout)
+	// configureLogging runs again once OpenTelemetry is up, so the warning
+	// stays here and is logged once.
+	logSuppressedAudit(cfg)
+}
+
+// logSuppressedAudit reports that audit records are not written when
+// server.logLevel is above info. Audit lines are Info, and the message is
+// logged at the configured level so the filter it describes lets it through.
+func logSuppressedAudit(cfg *config.Config) {
+	if cfg.Server.LogLevel > slog.LevelInfo {
+		slog.Log(context.Background(), cfg.Server.LogLevel,
+			"server.logLevel is above info: audit records (category=audit) are not written")
+	}
 }
 
 // configureLogging is ConfigureLogging with an injectable log destination
@@ -48,22 +60,6 @@ func configureLogging(cfg *config.Config, dest io.Writer, extras ...slog.Handler
 	}
 	slog.SetDefault(slog.New(logHandler))
 	httputil.CorrelationIDFunc = trace.GetTraceID
-	// Audit lines share these destinations but stay at Info. The process
-	// handler above drops them when server.logLevel is WARN or ERROR, and
-	// LogSink(nil) is built before this second call replaces slog.Default.
-	auditHandlers := []slog.Handler{
-		logging.NewHandler(slog.NewTextHandler(dest, &slog.HandlerOptions{Level: slog.LevelInfo})),
-	}
-	for _, h := range extras {
-		if h != nil {
-			auditHandlers = append(auditHandlers, logging.NewHandler(h))
-		}
-	}
-	auditHandler := auditHandlers[0]
-	if len(auditHandlers) > 1 {
-		auditHandler = slog.NewMultiHandler(auditHandlers...)
-	}
-	nswaudit.SetProcessLogger(slog.New(auditHandler))
 }
 
 // levelFilter drops records below min before they reach next. Enabled must

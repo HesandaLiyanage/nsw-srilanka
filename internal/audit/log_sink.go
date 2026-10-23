@@ -3,27 +3,9 @@ package audit
 import (
 	"context"
 	"log/slog"
-	"sync/atomic"
 )
 
 const categoryAudit = "audit"
-
-// processLog is the logger a nil-logger LogSink writes to. Bootstrap installs
-// it from the same stdout and OTLP handlers as the process logger, without
-// the server.logLevel filter: audit lines are Info, so WARN would drop every
-// record. Resolving it at Write time also picks up the handler installed
-// after OpenTelemetry starts, which replaces slog.Default.
-var processLog atomic.Pointer[slog.Logger]
-
-// SetProcessLogger installs the logger a nil-logger LogSink writes to.
-// The logger should accept Info. A nil argument clears it.
-func SetProcessLogger(logger *slog.Logger) {
-	if logger == nil {
-		processLog.Store(nil)
-		return
-	}
-	processLog.Store(logger.With(slog.String("category", categoryAudit)))
-}
 
 // LogSink writes enriched audit records as structured slog lines with
 // category=audit so they can be filtered from ops logs on the same stream.
@@ -31,8 +13,9 @@ type LogSink struct {
 	logger *slog.Logger
 }
 
-// NewLogSink returns a LogSink. A nil logger resolves SetProcessLogger, then
-// slog.Default, on each Write rather than at construction.
+// NewLogSink returns a LogSink. A nil logger uses slog.Default on each Write
+// rather than at construction, so it follows server.logLevel and the handler
+// installed after OpenTelemetry starts, which replaces slog.Default.
 func NewLogSink(logger *slog.Logger) *LogSink {
 	if logger != nil {
 		logger = logger.With(slog.String("category", categoryAudit))
@@ -43,9 +26,6 @@ func NewLogSink(logger *slog.Logger) *LogSink {
 func (s *LogSink) active() *slog.Logger {
 	if s.logger != nil {
 		return s.logger
-	}
-	if l := processLog.Load(); l != nil {
-		return l
 	}
 	return slog.Default().With(slog.String("category", categoryAudit))
 }
