@@ -23,6 +23,7 @@ import (
 	"github.com/OpenNSW/core/payment"
 	"github.com/OpenNSW/core/refid"
 	"github.com/OpenNSW/core/remote"
+	sharedaudit "github.com/OpenNSW/core/shared/audit"
 	"github.com/OpenNSW/core/taskflow/extensions"
 	"github.com/OpenNSW/core/taskflow/orchestrator"
 	"github.com/OpenNSW/core/taskflow/plugins"
@@ -69,8 +70,6 @@ import (
 	"github.com/OpenNSW/nsw-srilanka/internal/telemetry"
 	"github.com/OpenNSW/nsw-srilanka/internal/trade"
 	"github.com/OpenNSW/nsw-srilanka/internal/version"
-
-	"github.com/LSFLK/argus/pkg/audit"
 
 	"go.temporal.io/sdk/client"
 	"gorm.io/gorm"
@@ -151,6 +150,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 		return nil, err
 	}
 	paymentService := payment.NewPaymentService(paymentRepo, paymentRegistry, nswpayment.NewRefGenerator(refIDs))
+	// Built before payment and storage are handed to the task stack. Workers
+	// can emit events as soon as those services exist, so the auditor has to
+	// be attached here rather than after the task manager starts.
+	auditor := nswaudit.New()
+	auditor.RegisterSink(nswaudit.NewLogSink(nil))
+	coreAuditor := nswaudit.NewCoreAdapter(auditor)
+	var unwiredAudit []string
+	if !attachAuditor(paymentService, coreAuditor) {
+		unwiredAudit = append(unwiredAudit, "payment")
+	}
 
 	artifactRegistry, err := initArtifactRegistry(ctx, cfg)
 	if err != nil {
@@ -179,6 +188,9 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 	if err != nil {
 		_ = database.Close(db)
 		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+	}
+	if !attachAuditor(storageStack.Service, coreAuditor) {
+		unwiredAudit = append(unwiredAudit, "storage")
 	}
 	// The file tokens callers hold in place of stored file values.
 	fileAccess, err := newFileAccess(cfg.Storage)
@@ -244,10 +256,6 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 	// -------------------------------------------------------------------
 	// Stage 5: Consignment Service & Workflow Parent Runner
 	// -------------------------------------------------------------------
-	auditClient := audit.NewClient(cfg.Audit.ClientConfig())
-	audit.InitializeGlobalAudit(auditClient)
-	recorder := nswaudit.NewRecorder(auditClient)
-
 	// The mode decides what starts parent workflows: consignments in TNSW, injects in
 	// an agency (see agency.go). An agency builds none of the consignment stack, whose
 	// constructors require the trader and CHA roles an agency catalog does not map.
@@ -268,7 +276,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 			_ = database.Close(db)
 			return nil, fmt.Errorf("failed to build consignment service: %w", err)
 		}
-		consignmentRouter, err = consignment.NewRouter(consignmentService, chaService, companyService, recorder, globalCatalog.Roles)
+		consignmentRouter, err = consignment.NewRouter(consignmentService, chaService, companyService, auditor, globalCatalog.Roles)
 		if err != nil {
 			_ = stopTask()
 			temporalClient.Close()
@@ -414,7 +422,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 	// decides access from the role-tied ownership of the task's consignment.
 	taskFiles := tasks.NewFileBinding(fileAccess, stepNamespace(artifactRegistry))
 	canAct := stepCanAct(artifactRegistry, taskauthzext.NewExtension(taskCatalog(globalCatalog)))
-	taskHandler := tasks.NewHTTPHandler(tm, task.Store, task.Assembler, taskCatalog(globalCatalog), taskFiles, canAct, recorder, cfg.Server.MaxRequestBytes)
+	taskHandler := tasks.NewHTTPHandler(tm, task.Store, task.Assembler, taskCatalog(globalCatalog), taskFiles, canAct, auditor, cfg.Server.MaxRequestBytes)
 	// Layer 1 of task authorization, shared by the read and write routes: attach
 	// the caller's identity and a lazy ownership resolver for the PRE_RESUME authz
 	// extension and the read evaluator to consume. In TNSW a trader/CHA company owns a
@@ -553,19 +561,14 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 	// attaches the principal on a child request; the log reads it back from
 	// authn.RequestCaller.
 	configureLogging(cfg, os.Stdout, tel.SlogHandler())
+	for _, name := range unwiredAudit {
+		slog.Warn(name + " audit is not wired: service has no WithAuditor")
+	}
 	handler := trace.TraceMiddleware(securitylog.Middleware(slog.Default())(cors.CORS(&cfg.CORS)(tel.Handler("tnsw-api", mux))))
 	server := newHTTPServer(cfg.Server, handler)
 
 	closeFn := func() error {
 		var closeErrs []error
-
-		if auditClient != nil && auditClient.IsEnabled() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := auditClient.Close(shutdownCtx); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("failed to close audit client: %w", err))
-			}
-			cancel()
-		}
 
 		if err := stopParentRunner(); err != nil {
 			closeErrs = append(closeErrs, fmt.Errorf("failed to stop parent runner: %w", err))
@@ -873,6 +876,21 @@ func registerFlowPlugins(reg *plugins.Registry, db *gorm.DB, companyService comp
 		}
 	}
 	return nil
+}
+
+// attachAuditor calls WithAuditor when the service has it. Released payment
+// and storage do not. The call sits next to construction, before the task
+// stack starts workers that would race a later assignment. The caller logs a
+// miss after logging is configured, so the warning reaches stdout and OTLP.
+func attachAuditor(svc any, auditor sharedaudit.Auditor) bool {
+	setter, ok := svc.(interface {
+		WithAuditor(a sharedaudit.Auditor)
+	})
+	if !ok {
+		return false
+	}
+	setter.WithAuditor(auditor)
+	return true
 }
 
 func initTask(
