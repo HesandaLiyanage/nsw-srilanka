@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/OpenNSW/core/cors"
 	"github.com/OpenNSW/core/database"
 	"github.com/OpenNSW/core/notifications/providers"
+	"github.com/OpenNSW/core/remote"
+	remoteauth "github.com/OpenNSW/core/remote/auth"
 	"github.com/OpenNSW/core/storage"
 	"github.com/OpenNSW/core/storage/drivers"
 
@@ -45,7 +48,6 @@ server:
   port: 8080
   serviceURL: http://localhost:8080
   logLevel: info
-  servicesConfigPath: configs/services.json
   paymentMethodsConfigPath: configs/payment_methods.json
   catalogConfigPath: configs/catalog.json
   maxRequestBytes: 33554432
@@ -53,6 +55,9 @@ server:
   readTimeout: 15s
   writeTimeout: 30s
   idleTimeout: 60s
+services:
+  - id: tnsw
+    url: http://localhost:8080
 cors:
   allowedOrigins: ["http://localhost:3000"]
   allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
@@ -169,7 +174,6 @@ func validConfig() *Config {
 		},
 		Server: ServerConfig{
 			Port:                     8080,
-			ServicesConfigPath:       "configs/services.json",
 			PaymentMethodsConfigPath: "configs/payment_methods.json",
 			CatalogConfigPath:        "configs/catalog.json",
 			ServiceURL:               "http://localhost:8080",
@@ -179,6 +183,7 @@ func validConfig() *Config {
 			WriteTimeout:             30 * time.Second,
 			IdleTimeout:              60 * time.Second,
 		},
+		Services: []remote.ServiceConfig{{ID: "tnsw", URL: "http://localhost:8080"}},
 		CORS: cors.Config{
 			AllowedOrigins: []string{"http://localhost:3000"},
 			AllowedMethods: []string{"GET", "POST"},
@@ -343,7 +348,7 @@ func TestLoad_MissingRequiredSettingFails(t *testing.T) {
 		"db.postgres.pool.maxConnLifetimeSeconds",
 		"server.port",
 		"server.serviceURL",
-		"server.servicesConfigPath",
+		"services",
 		"server.paymentMethodsConfigPath",
 		"server.catalogConfigPath",
 		"server.maxRequestBytes",
@@ -771,7 +776,7 @@ func TestConfigValidate_RequiredSettings(t *testing.T) {
 		"no mode":          {func(c *Config) { c.Mode = "" }, "mode is required"},
 		"unknown mode":     {func(c *Config) { c.Mode = "both" }, "invalid mode"},
 		"no server port":   {func(c *Config) { c.Server.Port = 0 }, "server.port must be between 1 and 65535"},
-		"no services path": {func(c *Config) { c.Server.ServicesConfigPath = "" }, "server.servicesConfigPath is required"},
+		"no services":      {func(c *Config) { c.Services = nil }, "services is required"},
 		"no payments path": {func(c *Config) { c.Server.PaymentMethodsConfigPath = "" }, "server.paymentMethodsConfigPath is required"},
 		"no catalog path":  {func(c *Config) { c.Server.CatalogConfigPath = "" }, "server.catalogConfigPath is required"},
 		"no CORS methods":  {func(c *Config) { c.CORS.AllowedMethods = nil }, "cors.allowedMethods is required"},
@@ -866,29 +871,146 @@ func TestConfigValidate_JWKSInsecure_AllowedInDev(t *testing.T) {
 	}
 }
 
-func TestConfigValidate_ServicesInsecure_FailsClosedOutsideDev(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
-	path := filepath.Join(t.TempDir(), "services.json")
-	if err := os.WriteFile(path, []byte(`{"services":[{"id":"npqs","auth":{"type":"oauth2","options":{"insecure_skip_tls_verify":true}}}]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := validConfig()
-	cfg.Server.ServicesConfigPath = path
-	if err := cfg.Validate(); err == nil || !containsString(err.Error(), "APP_ENV") {
-		t.Fatalf("expected APP_ENV guard error for insecure services entry, got: %v", err)
+func TestConfigValidate_ServicesInsecure(t *testing.T) {
+	for _, env := range []string{"", "production", "staging", "development"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("APP_ENV", env)
+			_, err := loadYAML(t, configYAML(t, `
+services:
+  - id: npqs
+    url: https://npqs.example.com
+    auth:
+      type: oauth2
+      oauth2:
+        tokenURL: https://idp.example.com/token
+        clientID: test-client
+        clientSecret: test-secret
+        insecureSkipTLSVerify: true
+`))
+			if env == "development" {
+				if err != nil {
+					t.Fatalf("expected insecure services allowed in development, got: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "APP_ENV") {
+				t.Fatalf("expected APP_ENV guard error, got: %v", err)
+			}
+		})
 	}
 }
 
-func TestConfigValidate_ServicesInsecure_AllowedInDev(t *testing.T) {
-	t.Setenv("APP_ENV", "development")
-	path := filepath.Join(t.TempDir(), "services.json")
-	if err := os.WriteFile(path, []byte(`{"services":[{"id":"npqs","auth":{"type":"oauth2","options":{"insecure_skip_tls_verify":true}}}]}`), 0o600); err != nil {
+// Check committed deployment files through YAML loading and remote setup,
+// including M2M authentication, scopes, resource audiences and mTLS paths.
+func TestServices_DeploymentTemplates(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "configs")
+	paths := []string{filepath.Join(root, "config.example.yaml"), filepath.Join(root, "config.docker.example.yaml")}
+	agencyPaths, err := filepath.Glob(filepath.Join(root, "agency", "*", "config*.yaml"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := validConfig()
-	cfg.Server.ServicesConfigPath = path
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected no error with insecure services entry in development, got: %v", err)
+	paths = append(paths, agencyPaths...)
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, match := range regexp.MustCompile(`\{\{env:([A-Z0-9_]+)\}\}`).FindAllSubmatch(data, -1) {
+				t.Setenv(string(match[1]), "test-client-secret")
+			}
+			cfg, err := loadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cfg.Services) == 0 {
+				t.Fatal("deployment has no services")
+			}
+			for _, service := range cfg.Services {
+				if service.ID == "ippc-hub" {
+					if service.TLS == nil || service.TLS.ClientCertFile == "" || service.TLS.ClientKeyFile == "" {
+						t.Fatal("IPPC mTLS file paths were lost")
+					}
+					continue
+				}
+				checkOAuthServiceTemplate(t, service)
+			}
+			if err := remote.NewManager().SetServices(cfg.Services...); err != nil {
+				t.Fatalf("configure remote services: %v", err)
+			}
+		})
+	}
+}
+
+func checkOAuthServiceTemplate(t *testing.T, service remote.ServiceConfig) {
+	t.Helper()
+	if service.Auth == nil || service.Auth.Type != remoteauth.TypeOAuth2 || service.Auth.OAuth2 == nil {
+		t.Fatalf("service %q lost its OAuth2 settings", service.ID)
+	}
+	oauth := service.Auth.OAuth2
+	if oauth.TokenURL == "" || oauth.ClientID == "" {
+		t.Fatalf("service %q lost its token endpoint or client ID", service.ID)
+	}
+	if oauth.ClientSecret != "test-client-secret" {
+		t.Fatalf("service %q secret placeholder was not expanded", service.ID)
+	}
+	if service.ID != "slpa" && service.ID != "customs-asycuda" {
+		if len(oauth.Scopes) == 0 || len(oauth.EndpointParams["resource"]) == 0 {
+			t.Fatalf("service %q lost its scopes or resource audience", service.ID)
+		}
+	}
+}
+
+const servicesSecretYAML = `
+services:
+  - id: agency
+    url: https://agency.example.com
+    auth:
+      type: oauth2
+      oauth2:
+        tokenURL: https://idp.example.com/token
+        clientID: test-client
+        clientSecret: "SECRET_PLACEHOLDER"
+        endpointParams:
+          resource: [https://agency.example.com, https://storage.example.com]
+`
+
+func TestServices_MissingSecretFailsAtLoad(t *testing.T) {
+	t.Setenv("TEST_REMOTE_SECRET", "")
+	_, err := loadYAML(t, configYAML(t, strings.ReplaceAll(servicesSecretYAML, "SECRET_PLACEHOLDER", "{{env:TEST_REMOTE_SECRET}}")))
+	if err == nil || !strings.Contains(err.Error(), "TEST_REMOTE_SECRET") {
+		t.Fatalf("expected missing-secret error while loading YAML, got: %v", err)
+	}
+}
+
+func TestServices_SecretPlaceholders(t *testing.T) {
+	// Secret values with scheme prefixes must reach remote verbatim.
+	for _, value := range []string{"env:NOT_A_REFERENCE", "file:/not-a-reference", "literal:secret"} {
+		for _, source := range []string{"env", "file"} {
+			t.Run(source+"/"+value, func(t *testing.T) {
+				placeholder := "{{env:TEST_REMOTE_SECRET}}"
+				t.Setenv("TEST_REMOTE_SECRET", value)
+				if source == "file" {
+					path := filepath.Join(t.TempDir(), "secret")
+					if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					placeholder = "{{file:" + path + "}}"
+				}
+				cfg, err := loadYAML(t, configYAML(t, strings.ReplaceAll(servicesSecretYAML, "SECRET_PLACEHOLDER", placeholder)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				oauth := cfg.Services[0].Auth.OAuth2
+				if oauth.ClientSecret != value {
+					t.Fatal("secret was not passed through verbatim")
+				}
+				if len(oauth.EndpointParams["resource"]) != 2 {
+					t.Fatal("expected both resource parameters")
+				}
+				if err := remote.NewManager().SetServices(cfg.Services...); err != nil {
+					t.Fatalf("setup with a resolved secret: %v", err)
+				}
+			})
+		}
 	}
 }
 
