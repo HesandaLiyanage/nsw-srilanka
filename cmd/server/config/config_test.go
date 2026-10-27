@@ -71,6 +71,9 @@ storage:
     putSecret: test-put-secret
   presignTTLSeconds: 900
   allowedUploadTypes: [application/pdf, image/png]
+  uploadTypeExtensions:
+    application/pdf: [.pdf]
+    image/png: [.png]
   inlineTypes: [application/pdf, image/png]
   maxUploadBytes: 1048576
   # A test key: 32 bytes of 0x07.
@@ -202,9 +205,10 @@ func validConfig() *Config {
 				},
 				PresignTTLSeconds: 900,
 			},
-			AllowedUploadTypes: []string{"application/pdf"},
-			InlineTypes:        []string{"application/pdf"},
-			MaxUploadBytes:     1 << 20,
+			AllowedUploadTypes:   []string{"application/pdf"},
+			UploadTypeExtensions: map[string][]string{"application/pdf": {".pdf"}},
+			InlineTypes:          []string{"application/pdf"},
+			MaxUploadBytes:       1 << 20,
 			// A test key: 32 bytes of 0x07.
 			TokenKeyset: "test:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
 		},
@@ -372,6 +376,7 @@ func TestLoad_MissingRequiredSettingFails(t *testing.T) {
 		"storage.local.putSecret",
 		"storage.presignTTLSeconds",
 		"storage.allowedUploadTypes",
+		"storage.uploadTypeExtensions",
 		"storage.inlineTypes",
 		"storage.maxUploadBytes",
 		"storage.tokenKeyset",
