@@ -349,6 +349,13 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) { //nolint:goc
 			_ = database.Close(db)
 			return nil, fmt.Errorf("failed to register task workflow manager with consignment service: %w", err)
 		}
+		if err := consignmentService.RegisterTaskCanceller(tm); err != nil {
+			_ = stopParentRunner()
+			_ = stopTask()
+			temporalClient.Close()
+			_ = database.Close(db)
+			return nil, fmt.Errorf("failed to register task canceller with consignment service: %w", err)
+		}
 	}
 
 	// -------------------------------------------------------------------
