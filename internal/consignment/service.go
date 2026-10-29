@@ -29,6 +29,7 @@ import (
 // TaskStore is the narrow interface needed from taskv2 package to load task records.
 type TaskStore interface {
 	GetAllTasks(ctx context.Context, parentWorkflowID string) []store.TaskRecord
+	GetTaskByWorkflowID(ctx context.Context, workflowID string) (store.TaskRecord, bool)
 }
 
 // CaseFlows creates a case and starts and lists its flows. *caseflow.Service satisfies it.
