@@ -138,10 +138,11 @@ func TestTaskWorkflowActions_AuditTarget(t *testing.T) {
 
 func TestWorkflowEngineStatus_AuditTargetUnchanged(t *testing.T) {
 	tasks := new(MockTaskStore) // A flow audit must not use the task-workflow lookup.
+	tasks.On("GetAllTasks", mock.Anything, "flow-1").Return([]store.TaskRecord(nil)).Once()
 	svc := mustNewService(t, nil, nil, nil, nil, nil, tasks)
 	wm := new(MockWM)
 	require.NoError(t, svc.RegisterWorkflowManager(wm))
-	wm.On("GetStatus", mock.Anything, "flow-1").Return(&workflow.WorkflowInstance{ID: "flow-1"}, nil).Once()
+	wm.On("GetStatus", mock.Anything, "flow-1").Return(&workflow.WorkflowInstance{ID: "flow-1", WorkflowVariables: map[string]any{workflow.VarCaseID: "flow-1"}}, nil).Once()
 	client, capture := nswaudit.NewWithCapture()
 	router := mustNewRouter(t, svc, nil, nil, client)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -153,7 +154,9 @@ func TestWorkflowEngineStatus_AuditTargetUnchanged(t *testing.T) {
 	records := capture.Records()
 	require.Len(t, records, 1)
 	assert.Equal(t, "flow-1", records[0].TargetID)
-	assert.Equal(t, map[string]any{"view": "engine-status"}, records[0].Metadata)
+	assert.Equal(t, "engine-status", records[0].Metadata["view"])
+	assert.Equal(t, "flow-1", records[0].Metadata["workflowId"])
 	wm.AssertExpectations(t)
+	tasks.AssertExpectations(t)
 	tasks.AssertNotCalled(t, "GetTaskByWorkflowID", mock.Anything, mock.Anything)
 }

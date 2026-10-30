@@ -433,7 +433,7 @@ func (c *Router) HandleGetConsignmentAgency(w http.ResponseWriter, r *http.Reque
 // check, so any caller holding the admin scope can view any workflow's engine state
 // by design.
 func (c *Router) HandleGetWorkflowEngineStatus(w http.ResponseWriter, r *http.Request) {
-	c.handleEngineStatus(w, r, "engine-status", false, c.cs.GetEngineStatus)
+	c.handleEngineStatus(w, r, "engine-status", true, c.cs.GetEngineStatus)
 }
 
 // HandleGetTaskWorkflowEngineStatus handles GET /api/v1/admin/task/{id}/engine-status.
@@ -442,17 +442,17 @@ func (c *Router) HandleGetWorkflowEngineStatus(w http.ResponseWriter, r *http.Re
 // workflow.Manager from the flow/child-workflow IDs HandleGetWorkflowEngineStatus
 // queries. Gated on scopes.ConsignmentAdminRead at the route (see bootstrap/app.go).
 func (c *Router) HandleGetTaskWorkflowEngineStatus(w http.ResponseWriter, r *http.Request) {
-	c.handleEngineStatus(w, r, "task-workflow-engine-status", true, c.cs.GetTaskWorkflowEngineStatus)
+	c.handleEngineStatus(w, r, "task-workflow-engine-status", false, c.cs.GetTaskWorkflowEngineStatus)
 }
 
 // handleEngineStatus is the common request/response handling shared by
 // HandleGetWorkflowEngineStatus and HandleGetTaskWorkflowEngineStatus — they differ only in
 // which Service method resolves {id} into an *EngineStatusDTO, the audit "view" label, and
-// whether the audit target needs a task-store lookup.
+// whether the target comes from the flow variables.
 func (c *Router) handleEngineStatus(
 	w http.ResponseWriter, r *http.Request,
 	view string,
-	taskWorkflow bool,
+	flowAudit bool,
 	fetch func(ctx context.Context, id string) (*EngineStatusDTO, error),
 ) {
 	ctx := r.Context()
@@ -476,9 +476,13 @@ func (c *Router) handleEngineStatus(
 		return
 	}
 
-	c.auditWorkflowEvent(ctx, taskWorkflow, nswaudit.ConsignmentEvent(nswaudit.ActionRead, id, false, map[string]any{
-		"view": view,
-	}))
+	event := nswaudit.ConsignmentEvent(nswaudit.ActionRead, id, false, map[string]any{"view": view})
+	if flowAudit {
+		caseID, _ := status.GlobalVariables[workflow.VarCaseID].(string)
+		c.auditFlowEventWithCaseID(ctx, event, caseID)
+	} else {
+		c.auditTaskWorkflowEvent(ctx, event)
+	}
 	httputil.JSON(w, http.StatusOK, status)
 }
 
@@ -505,7 +509,7 @@ type ResolveAdminInterventionRequest struct {
 // Requires scopes.ConsignmentAdminWrite (see bootstrap/app.go): resolving can change workflow data
 // (GlobalVariablesPatch) or force a path the interpreter didn't choose (Complete/Abort).
 func (c *Router) HandleResolveAdminIntervention(w http.ResponseWriter, r *http.Request) {
-	c.handleResolveAdminIntervention(w, r, "admin-resolve", false, c.cs.ResolveAdminIntervention)
+	c.handleResolveAdminIntervention(w, r, "admin-resolve", c.cs.ResolveAdminIntervention, c.auditFlowEvent)
 }
 
 // HandleResolveTaskWorkflowAdminIntervention handles
@@ -514,17 +518,16 @@ func (c *Router) HandleResolveAdminIntervention(w http.ResponseWriter, r *http.R
 // flow/child-workflow IDs HandleResolveAdminIntervention takes, the same split as the two
 // engine-status routes. Otherwise identical, and gated on the same scope.
 func (c *Router) HandleResolveTaskWorkflowAdminIntervention(w http.ResponseWriter, r *http.Request) {
-	c.handleResolveAdminIntervention(w, r, "task-workflow-admin-resolve", true, c.cs.ResolveTaskWorkflowAdminIntervention)
+	c.handleResolveAdminIntervention(w, r, "task-workflow-admin-resolve", c.cs.ResolveTaskWorkflowAdminIntervention, c.auditTaskWorkflowEvent)
 }
 
 // handleResolveAdminIntervention is the request handling the two resolve routes share; they differ
-// in which Service method resolves {id}, the audit "view" label, and whether the audit target
-// needs a task-store lookup.
+// in which Service method resolves {id}, the audit "view" label, and the audit target resolver.
 func (c *Router) handleResolveAdminIntervention(
 	w http.ResponseWriter, r *http.Request,
 	view string,
-	taskWorkflow bool,
 	resolve func(ctx context.Context, workflowID string, sig workflow.AdminResolutionSignal) (nodeID string, err error),
+	recordAudit func(context.Context, nswaudit.Event),
 ) {
 	ctx := r.Context()
 	if _, ok := authn.FromContext(ctx); !ok {
@@ -574,7 +577,7 @@ func (c *Router) handleResolveAdminIntervention(
 	}
 
 	auditFail := func(errMsg string) {
-		c.auditWorkflowEvent(ctx, taskWorkflow, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, true, map[string]any{
+		recordAudit(ctx, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, true, map[string]any{
 			"view":   view,
 			"stepId": stepID,
 			"action": req.Action,
@@ -607,7 +610,7 @@ func (c *Router) handleResolveAdminIntervention(
 		return
 	}
 
-	c.auditWorkflowEvent(ctx, taskWorkflow, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, false, map[string]any{
+	recordAudit(ctx, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, false, map[string]any{
 		"view":   view,
 		"stepId": stepID,
 		"nodeId": nodeID,
@@ -631,7 +634,7 @@ type ForceParkRequest struct {
 // Requires scopes.ConsignmentAdminWrite, like resolve: it takes a task away from the trader or
 // officer working on it.
 func (c *Router) HandleForceParkTaskNode(w http.ResponseWriter, r *http.Request) {
-	c.handleForcePark(w, r, "admin-force-park", false, c.cs.ForceParkTaskNode)
+	c.handleForcePark(w, r, "admin-force-park", c.cs.ForceParkTaskNode, c.auditFlowEvent)
 }
 
 // HandleForceParkTaskWorkflowStep handles POST /api/v1/admin/task/{id}/steps/{stepId}/force-park.
@@ -640,17 +643,16 @@ func (c *Router) HandleForceParkTaskNode(w http.ResponseWriter, r *http.Request)
 // Service.ForceParkTaskWorkflowStep); the task workflow's resolve route applies after. Gated on the
 // same scope as HandleForceParkTaskNode.
 func (c *Router) HandleForceParkTaskWorkflowStep(w http.ResponseWriter, r *http.Request) {
-	c.handleForcePark(w, r, "task-workflow-admin-force-park", true, c.cs.ForceParkTaskWorkflowStep)
+	c.handleForcePark(w, r, "task-workflow-admin-force-park", c.cs.ForceParkTaskWorkflowStep, c.auditTaskWorkflowEvent)
 }
 
 // handleForcePark is the request handling the two force-park routes share; they differ only in
-// which Service method parks the step, the audit "view" label, and whether the audit target
-// needs a task-store lookup.
+// which Service method parks the step, the audit "view" label, and the audit target resolver.
 func (c *Router) handleForcePark(
 	w http.ResponseWriter, r *http.Request,
 	view string,
-	taskWorkflow bool,
 	forcePark func(ctx context.Context, workflowID, stepID, reason string) (nodeID string, err error),
+	recordAudit func(context.Context, nswaudit.Event),
 ) {
 	ctx := r.Context()
 	if _, ok := authn.FromContext(ctx); !ok {
@@ -689,7 +691,7 @@ func (c *Router) handleForcePark(
 	}
 
 	auditFail := func(errMsg string) {
-		c.auditWorkflowEvent(ctx, taskWorkflow, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, true, map[string]any{
+		recordAudit(ctx, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, true, map[string]any{
 			"view":   view,
 			"stepId": stepID,
 			"error":  errMsg,
@@ -715,7 +717,7 @@ func (c *Router) handleForcePark(
 		return
 	}
 
-	c.auditWorkflowEvent(ctx, taskWorkflow, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, false, map[string]any{
+	recordAudit(ctx, nswaudit.ConsignmentEvent(nswaudit.ActionUpdate, workflowID, false, map[string]any{
 		"view":   view,
 		"stepId": stepID,
 		"nodeId": nodeID,
@@ -724,29 +726,53 @@ func (c *Router) handleForcePark(
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// auditWorkflowEvent resolves task-workflow audit targets from the persisted task record.
-// Task workflow variables do not reliably carry the case ID. Lookup failures must not
-// change an admin operation's result or label a workflow ID as a consignment ID.
-func (c *Router) auditWorkflowEvent(ctx context.Context, taskWorkflow bool, e nswaudit.Event) {
+// auditTaskWorkflowEvent resolves a task workflow's case from its persisted task record.
+// Task-workflow variables do not reliably carry the case ID. A missing record leaves
+// the target empty while retaining the workflow ID and the operation's original result.
+func (c *Router) auditTaskWorkflowEvent(ctx context.Context, e nswaudit.Event) {
 	if c.audit == nil {
 		return
 	}
-	if taskWorkflow {
-		workflowID := e.TargetID
-		e.TargetID = ""
-		if e.Metadata == nil {
-			e.Metadata = make(map[string]any)
+	caseID := ""
+	if c.cs.taskStore != nil {
+		if record, ok := c.cs.taskStore.GetTaskByWorkflowID(ctx, e.TargetID); ok {
+			caseID = record.CaseID
 		}
-		e.Metadata["workflowId"] = workflowID
-		if c.cs.taskStore != nil {
-			if record, ok := c.cs.taskStore.GetTaskByWorkflowID(ctx, workflowID); ok {
-				e.TargetID = record.CaseID
-			}
+	}
+	c.auditFlowEventWithCaseID(ctx, e, caseID)
+}
+
+// auditFlowEvent resolves the case for a flow/child-workflow mutation audit. The extra
+// status read is best-effort: the mutation's result must survive a lookup failure or a
+// workflow that has already closed. Engine-status reads reuse their existing snapshot instead.
+func (c *Router) auditFlowEvent(ctx context.Context, e nswaudit.Event) {
+	if c.audit == nil {
+		return
+	}
+	caseID := ""
+	if c.cs.wm != nil {
+		if instance, err := c.cs.wm.GetStatus(ctx, e.TargetID); err == nil && instance != nil {
+			caseID, _ = instance.WorkflowVariables[workflow.VarCaseID].(string)
 		}
-		if e.TargetID == "" {
-			e.Metadata["targetResolutionError"] = "task workflow consignment could not be resolved"
-			slog.WarnContext(ctx, "task workflow audit target could not be resolved", "workflowId", workflowID)
-		}
+	}
+	c.auditFlowEventWithCaseID(ctx, e, caseID)
+}
+
+// auditFlowEventWithCaseID keeps a flow or task-workflow address in metadata and targets the case.
+// An unknown case stays empty rather than being mislabeled with a flow/child-workflow ID.
+func (c *Router) auditFlowEventWithCaseID(ctx context.Context, e nswaudit.Event, caseID string) {
+	if c.audit == nil {
+		return
+	}
+	workflowID := e.TargetID
+	e.TargetID = caseID
+	if e.Metadata == nil {
+		e.Metadata = make(map[string]any)
+	}
+	e.Metadata["workflowId"] = workflowID
+	if caseID == "" {
+		e.Metadata["targetResolutionError"] = "workflow consignment could not be resolved"
+		slog.WarnContext(ctx, "workflow audit target could not be resolved", "workflowId", workflowID)
 	}
 	c.auditEvent(ctx, e)
 }
