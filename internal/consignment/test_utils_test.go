@@ -26,6 +26,11 @@ type MockTaskStore struct {
 	mock.Mock
 }
 
+func (m *MockTaskStore) GetTaskByWorkflowID(ctx context.Context, workflowID string) (store.TaskRecord, bool) {
+	args := m.Called(ctx, workflowID)
+	return args.Get(0).(store.TaskRecord), args.Bool(1)
+}
+
 func (m *MockTaskStore) GetAllTasks(ctx context.Context, parentWorkflowID string) []store.TaskRecord {
 	args := m.Called(ctx, parentWorkflowID)
 	if args.Get(0) == nil {
