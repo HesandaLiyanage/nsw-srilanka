@@ -13,6 +13,10 @@ import (
 	nswaudit "github.com/OpenNSW/nsw-srilanka/internal/audit"
 )
 
+// maxAuditIDLen bounds callback-controlled correlation metadata in bytes. Oversized
+// values are omitted, not truncated into a different identifier; lookups use the original.
+const maxAuditIDLen = 128
+
 // WithAuditor enables callback outcome audits. Repositories resolve document IDs
 // after processing; a missing document or lookup error never changes the HTTP result.
 // Configure it before serving requests, like the other handler dependencies.
@@ -33,6 +37,7 @@ type callbackIdentity struct {
 	} `json:"payload"`
 }
 
+// auditCallback emits one bounded delivery outcome without copying arbitrary payload fields.
 func (h *Handler) auditCallback(ctx context.Context, body []byte, status int) {
 	// No response was written if processing panicked. Never report that as success.
 	if status == 0 {
@@ -50,11 +55,11 @@ func (h *Handler) auditCallback(ctx context.Context, body []byte, status int) {
 		return
 	}
 	identity.EventType = strings.ToUpper(strings.TrimSpace(identity.EventType))
-	e.Metadata["eventType"] = identity.EventType
+	e.Metadata["eventType"] = "UNKNOWN"
 	if e.Failure {
 		e.Metadata["error_code"] = "callback_rejected"
 	}
-	if identity.Payload.EdgeID != "" {
+	if identity.Payload.EdgeID != "" && len(identity.Payload.EdgeID) <= maxAuditIDLen {
 		e.Metadata["edgeId"] = identity.Payload.EdgeID
 	}
 	if identity.Payload.Integrated != nil {
@@ -62,15 +67,17 @@ func (h *Handler) auditCallback(ctx context.Context, body []byte, status int) {
 	}
 	switch identity.EventType {
 	case "CUSDEC_INTEGRATED", "PAYMENT_CONFIRMED", "WARRANTING_COMPLETED", "EXPORT_RELEASED", cusdec.EventCusdecAmended, cusdec.EventCusdecCancelled:
+		e.Metadata["eventType"] = identity.EventType
 		e.TargetType = nswaudit.TargetDeclaration
-		if identity.Payload.CusdecRef.IsValid() {
-			e.Metadata["documentRef"] = identity.Payload.CusdecRef.String()
+		if ref := auditDocumentReference(identity.Payload.CusdecRef); ref != "" {
+			e.Metadata["documentRef"] = ref
 		}
 		h.resolveDeclarationTarget(ctx, identity, &e)
 	case "CDN_INTEGRATED", "CDN_ACKNOWLEDGED", cdn.EventCDNAmended, cdn.EventCDNCancelled:
+		e.Metadata["eventType"] = identity.EventType
 		e.TargetType = nswaudit.TargetDispatchNote
-		if identity.Payload.CDNRef.IsValid() {
-			e.Metadata["documentRef"] = identity.Payload.CDNRef.String()
+		if ref := auditDocumentReference(identity.Payload.CDNRef); ref != "" {
+			e.Metadata["documentRef"] = ref
 		}
 		h.resolveDispatchNoteTarget(ctx, identity, &e)
 	}
@@ -80,6 +87,19 @@ func (h *Handler) auditCallback(ctx context.Context, body []byte, status int) {
 	h.auditor.Audit(ctx, e)
 }
 
+// auditDocumentReference returns only complete references that fit the metadata bound.
+func auditDocumentReference(ref document.Reference) string {
+	if !ref.IsValid() {
+		return ""
+	}
+	value := ref.String()
+	if len(value) > maxAuditIDLen {
+		return ""
+	}
+	return value
+}
+
+// resolveDeclarationTarget uses the original callback identifiers to find a local declaration.
 func (h *Handler) resolveDeclarationTarget(ctx context.Context, id callbackIdentity, e *nswaudit.Event) {
 	if h.declarations == nil {
 		return
@@ -101,6 +121,7 @@ func (h *Handler) resolveDeclarationTarget(ctx context.Context, id callbackIdent
 	}
 }
 
+// resolveDispatchNoteTarget uses the original callback identifiers to find a local dispatch note.
 func (h *Handler) resolveDispatchNoteTarget(ctx context.Context, id callbackIdentity, e *nswaudit.Event) {
 	if h.dispatchNotes == nil {
 		return
@@ -128,6 +149,7 @@ type callbackResponse struct {
 	status int
 }
 
+// WriteHeader captures the first response status and preserves duplicate-header behavior.
 func (w *callbackResponse) WriteHeader(status int) {
 	if w.status != 0 {
 		return
@@ -136,6 +158,7 @@ func (w *callbackResponse) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// Write records an implicit 200 before forwarding the response body unchanged.
 func (w *callbackResponse) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)

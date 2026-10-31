@@ -14,6 +14,8 @@
 // and handled Customs rejections (integrated=false). Unresolved documents leave
 // the target empty; malformed/unknown callbacks use CUSTOMS_CALLBACK. Payloads
 // and Customs error descriptions are not copied into these audit records.
+// Callback event names are allowlisted (UNKNOWN otherwise); callback-controlled
+// edgeId and documentRef values over 128 bytes are omitted without changing lookups.
 //
 // RegisterSink is intended for composition-root wiring only. Audit itself is
 // nil-receiver safe so optional call sites can leave the dependency unset.

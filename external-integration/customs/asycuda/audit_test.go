@@ -13,6 +13,7 @@ import (
 	"github.com/OpenNSW/core/trace"
 	"github.com/OpenNSW/nsw-srilanka/external-integration/customs/asycuda/cdn"
 	"github.com/OpenNSW/nsw-srilanka/external-integration/customs/asycuda/cusdec"
+	"github.com/OpenNSW/nsw-srilanka/external-integration/customs/asycuda/document"
 	nswaudit "github.com/OpenNSW/nsw-srilanka/internal/audit"
 	"github.com/OpenNSW/nsw-srilanka/internal/authn"
 	"github.com/stretchr/testify/assert"
@@ -232,4 +233,62 @@ func TestSLCEHandler_AuditRetryableFailure(t *testing.T) {
 	assert.Equal(t, "note-1", records[0].TargetID)
 	assert.Equal(t, http.StatusServiceUnavailable, records[0].Metadata["httpStatus"])
 	ns.AssertExpectations(t)
+}
+
+func TestSLCEHandler_AuditUnknownEventIsAllowlisted(t *testing.T) {
+	client, capture := nswaudit.NewWithCapture()
+	h := NewHandler(new(mockCusdecService), new(mockCDNService)).WithAuditor(client, nil, nil)
+	unknown := strings.Repeat("untrusted-payload-", 100)
+	w := httptest.NewRecorder()
+	h.HandleWebhook(w, callbackAuditRequest(fmt.Sprintf(`{"eventType":%q}`, unknown)))
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	records := capture.Records()
+	require.Len(t, records, 1)
+	assert.Equal(t, "UNKNOWN", records[0].Metadata["eventType"])
+	metadata, err := json.Marshal(records[0].Metadata)
+	require.NoError(t, err)
+	assert.NotContains(t, string(metadata), unknown)
+}
+
+func TestSLCEHandler_AuditEdgeIDBoundPreservesLookup(t *testing.T) {
+	for _, length := range []int{maxAuditIDLen, maxAuditIDLen + 1} {
+		t.Run(fmt.Sprint(length), func(t *testing.T) {
+			edgeID := strings.Repeat("e", length)
+			cs := new(mockCusdecService)
+			cs.On("ProcessIntegrationResult", mock.Anything, mock.MatchedBy(func(r cusdec.CusdecIntegrationResultRequest) bool {
+				return r.EdgeID == edgeID
+			})).Return(nil).Once()
+			decls := &auditDeclarationRepo{decl: &cusdec.CusdecDeclaration{ID: "declaration-1"}}
+			client, capture := nswaudit.NewWithCapture()
+			h := NewHandler(cs, new(mockCDNService)).WithAuditor(client, decls, nil)
+			w := httptest.NewRecorder()
+			h.HandleWebhook(w, callbackAuditRequest(fmt.Sprintf(`{"eventType":" cusdec_integrated ","processedAt":"2026-07-23T11:00:00Z","payload":{"edgeId":%q,"integrated":false}}`, edgeID)))
+			require.Equal(t, http.StatusOK, w.Code)
+			records := capture.Records()
+			require.Len(t, records, 1)
+			assert.Equal(t, "CUSDEC_INTEGRATED", records[0].Metadata["eventType"])
+			assert.Equal(t, "declaration-1", records[0].TargetID)
+			assert.Equal(t, []string{edgeID}, decls.lookups)
+			if length <= maxAuditIDLen {
+				assert.Equal(t, edgeID, records[0].Metadata["edgeId"])
+			} else {
+				assert.NotContains(t, records[0].Metadata, "edgeId")
+			}
+			cs.AssertExpectations(t)
+		})
+	}
+}
+
+func TestAuditDocumentReferenceBound(t *testing.T) {
+	for _, length := range []int{maxAuditIDLen, maxAuditIDLen + 1} {
+		// The separators and the three single-character fields take six bytes.
+		ref := document.Reference{Office: strings.Repeat("o", length-6), Year: "1", Serial: "E", Number: 1}
+		require.Len(t, ref.String(), length)
+		if length <= maxAuditIDLen {
+			assert.Equal(t, ref.String(), auditDocumentReference(ref))
+		} else {
+			assert.Empty(t, auditDocumentReference(ref))
+		}
+	}
+	assert.Empty(t, auditDocumentReference(document.Reference{}))
 }
