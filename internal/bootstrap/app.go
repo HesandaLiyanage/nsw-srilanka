@@ -425,7 +425,8 @@ func Build(ctx context.Context, cfg *config.Config) (app *App, err error) { //no
 		cusdecRepo := cusdec.NewDeclarationRepository(db)
 		cusdecWebhookService := cusdec.NewWebhookService(cusdecRepo, parkedtask.NewStore(db), systemTasks, caseFlowStarter{flowService})
 
-		slceHandler = asycuda.NewHandler(cusdecWebhookService, cdnWebhookService)
+		slceHandler = asycuda.NewHandler(cusdecWebhookService, cdnWebhookService).
+			WithAuditor(auditor, cusdecRepo, cdnRepo)
 
 		// TEMPORARY debugging code (see asycuda/debug_forward.go): copy every SLC
 		// Edge callback to the slce-debug-forward service when config.yaml has one.
