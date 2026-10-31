@@ -7,6 +7,14 @@
 // shared/audit.Event values; CoreAdapter maps those into this package's Event
 // vocabulary before they reach the Client.
 //
+// Authenticated SLC Edge deliveries emit CUSTOMS_EVENT records targeting a
+// CUSTOMS_DECLARATION or CARGO_DISPATCH_NOTE by its local record ID. Metadata
+// keeps eventType, httpStatus, caseId and available edgeId/documentRef values.
+// Success means callback processing was accepted, including duplicate deliveries
+// and handled Customs rejections (integrated=false). Unresolved documents leave
+// the target empty; malformed/unknown callbacks use CUSTOMS_CALLBACK. Payloads
+// and Customs error descriptions are not copied into these audit records.
+//
 // RegisterSink is intended for composition-root wiring only. Audit itself is
 // nil-receiver safe so optional call sites can leave the dependency unset.
 package audit
